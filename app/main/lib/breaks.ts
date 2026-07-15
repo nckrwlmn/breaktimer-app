@@ -24,6 +24,12 @@ function stripHtml(html: string): string {
     .trim();
 }
 
+// The break countdown only advances while the computer is actively being
+// used. After this many seconds without mouse or keyboard input, the timer
+// pauses and resumes when input is detected again, so only active time counts
+// down toward the next break.
+const ACTIVITY_PAUSE_SECONDS = 10;
+
 let powerMonitor: PowerMonitor;
 let breakTime: BreakTime = null;
 let havingBreak = false;
@@ -113,6 +119,12 @@ function getIdleResetSeconds(): number {
 function getBreakSeconds(): number {
   const settings: Settings = getSettings();
   return getSecondsFromSettings(settings.breakFrequencySeconds);
+}
+
+// Returns true when the user has not moved the mouse or pressed a key for
+// longer than the pause threshold, meaning the countdown should be paused.
+function isUserInactive(): boolean {
+  return powerMonitor.getSystemIdleTime() >= ACTIVITY_PAUSE_SECONDS;
 }
 
 function createIdleNotification() {
@@ -409,7 +421,16 @@ function tick(): void {
     }
 
     if (shouldHaveBreak) {
-      checkBreak();
+      if (breakTime && isUserInactive()) {
+        // The user isn't actively using the computer (no mouse/keyboard input
+        // for at least ACTIVITY_PAUSE_SECONDS). Pause the countdown by pushing
+        // the scheduled break time forward by the elapsed interval, so only
+        // active time counts down toward the next break.
+        breakTime = moment(breakTime).add(secondsSinceLastTick, "seconds");
+        buildTray();
+      } else {
+        checkBreak();
+      }
     }
   } finally {
     lastTick = new Date();
