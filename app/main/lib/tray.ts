@@ -9,6 +9,7 @@ import {
   checkInWorkingHours,
   getBreakTime,
   getTimeSinceLastCompletedBreak,
+  isCountdownPaused,
   isHavingBreak,
   startBreakNow,
 } from "./breaks";
@@ -202,6 +203,9 @@ export function buildTray(): void {
       nextBreak = `Next break in 1 minute`;
     } else {
       nextBreak = `Next break in less than a minute`;
+    }
+    if (isCountdownPaused()) {
+      nextBreak += " (paused, no activity)";
     }
   }
 

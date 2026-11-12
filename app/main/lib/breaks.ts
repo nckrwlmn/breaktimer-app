@@ -121,10 +121,54 @@ function getBreakSeconds(): number {
   return getSecondsFromSettings(settings.breakFrequencySeconds);
 }
 
+let countdownPaused = false;
+
+export function isCountdownPaused(): boolean {
+  return countdownPaused;
+}
+
 // Returns true when the user has not moved the mouse or pressed a key for
-// longer than the pause threshold, meaning the countdown should be paused.
+// longer than the pause threshold (or the screen is locked), meaning the
+// countdown should be paused.
 function isUserInactive(): boolean {
+  if (powerMonitor.getSystemIdleState(ACTIVITY_PAUSE_SECONDS) === "locked") {
+    return true;
+  }
   return powerMonitor.getSystemIdleTime() >= ACTIVITY_PAUSE_SECONDS;
+}
+
+// Pauses the countdown while the user is inactive. Returns true if paused.
+function updateActivityPause(secondsSinceLastTick: number): boolean {
+  if (!breakTime) {
+    countdownPaused = false;
+    return false;
+  }
+
+  if (!isUserInactive()) {
+    if (countdownPaused) {
+      countdownPaused = false;
+      log.info("Activity detected, resuming break countdown");
+      buildTray();
+    }
+    return false;
+  }
+
+  if (!countdownPaused) {
+    // Just became inactive: credit back the idle seconds that already
+    // elapsed before the threshold was reached, so they don't count.
+    countdownPaused = true;
+    const idleSeconds = Math.max(
+      powerMonitor.getSystemIdleTime(),
+      ACTIVITY_PAUSE_SECONDS,
+    );
+    breakTime = moment(breakTime).add(idleSeconds, "seconds");
+    log.info(`No activity for ${idleSeconds}s, pausing break countdown`);
+  } else {
+    breakTime = moment(breakTime).add(secondsSinceLastTick, "seconds");
+  }
+
+  buildTray();
+  return true;
 }
 
 function createIdleNotification() {
@@ -259,7 +303,10 @@ function doBreak(): void {
   buildTray();
 }
 
-function checkInWorkingHoursAt(now: moment.Moment, settings: Settings): boolean {
+function checkInWorkingHoursAt(
+  now: moment.Moment,
+  settings: Settings,
+): boolean {
   if (!settings.workingHoursEnabled) {
     return true;
   }
@@ -421,16 +468,20 @@ function tick(): void {
     }
 
     if (shouldHaveBreak) {
-      if (breakTime && isUserInactive()) {
-        // The user isn't actively using the computer (no mouse/keyboard input
-        // for at least ACTIVITY_PAUSE_SECONDS). Pause the countdown by pushing
-        // the scheduled break time forward by the elapsed interval, so only
-        // active time counts down toward the next break.
-        breakTime = moment(breakTime).add(secondsSinceLastTick, "seconds");
-        buildTray();
-      } else {
+      // Only active time (mouse/keyboard input within ACTIVITY_PAUSE_SECONDS)
+      // counts down toward the next break. Breaks started from the tray are
+      // never paused.
+      // A due break also waits until there was input in the last 2 seconds,
+      // so it doesn't fire just after the user stepped away.
+      if (
+        startedFromTray ||
+        (!updateActivityPause(secondsSinceLastTick) &&
+          powerMonitor.getSystemIdleTime() < 2)
+      ) {
         checkBreak();
       }
+    } else {
+      countdownPaused = false;
     }
   } finally {
     lastTick = new Date();
