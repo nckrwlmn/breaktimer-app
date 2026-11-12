@@ -39,7 +39,6 @@ let lockStart: Date | null = null;
 let lastTick: Date | null = null;
 let startedFromTray = false;
 
-let lastCompletedBreakTime: Date | null = new Date();
 let currentBreakStartTime: Date | null = null;
 
 export function getBreakTime(): BreakTime {
@@ -51,16 +50,16 @@ export function getBreakLengthSeconds(): number {
   return settings.breakLengthSeconds;
 }
 
+// Seconds of active use (mouse/keyboard input) since the last completed
+// break. Idle time, locked time and sleep don't count.
+let activeSecondsSinceBreak = 0;
+
 export function getTimeSinceLastBreak(): number | null {
-  const now = moment();
-  const lastBreak = moment(lastCompletedBreakTime);
-  return now.diff(lastBreak, "seconds");
+  return Math.round(activeSecondsSinceBreak);
 }
 
 export function getTimeSinceLastCompletedBreak(): number | null {
-  const now = moment();
-  const lastBreak = moment(lastCompletedBreakTime);
-  return now.diff(lastBreak, "seconds");
+  return Math.round(activeSecondsSinceBreak);
 }
 
 export function startBreakTracking(): void {
@@ -68,7 +67,7 @@ export function startBreakTracking(): void {
 }
 
 export function resetTimeSinceLastBreak(context: string): void {
-  lastCompletedBreakTime = new Date();
+  activeSecondsSinceBreak = 0;
   log.info(context);
   buildTray();
 }
@@ -426,6 +425,12 @@ function tick(): void {
       ? Math.abs(+new Date() - +lastTick) / 1000
       : 0;
     const breakSeconds = getBreakSeconds();
+
+    // Cap per-tick credit so sleep/hibernate gaps never count as active time.
+    if (!havingBreak && inWorkingHours && !isUserInactive()) {
+      activeSecondsSinceBreak += Math.min(secondsSinceLastTick, 5);
+    }
+
     const lockSeconds = lockStart && Math.abs(+new Date() - +lockStart) / 1000;
 
     if (lockStart && lockSeconds !== null && lockSeconds > breakSeconds) {
